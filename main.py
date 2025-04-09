@@ -6,6 +6,7 @@ import time
 import threading
 from cryptography.fernet import Fernet
 from matplotlib.animation import FuncAnimation
+import matplotlib.pyplot as plt
 
 class DataProcessor:
     def __init__(self, file_path):
@@ -76,54 +77,91 @@ class DataProcessor:
     def realtime_plot(self):
         """
         Genera un gráfico en tiempo real que muestra el uso de CPU.
-        Se utiliza FuncAnimation de matplotlib para actualizar el gráfico cada 500 ms.
+        Ahora con actualización verdaderamente continua.
         """
-        plt.style.use('seaborn')
-        fig, ax = plt.subplots()
-        ax.set_title("Uso de CPU en Tiempo Real")
-        ax.set_xlabel("Tiempo (s)")
+        plt.style.use('seaborn-v0_8-darkgrid')
+        fig, ax = plt.subplots(figsize=(6, 2))
+        ax.set_title("CPU Use - Real time")
+        ax.set_xlabel("Time (seconds)")
         ax.set_ylabel("CPU (%)")
-        line, = ax.plot([], [], lw=2)
-
+        line, = ax.plot([], [], lw=2, color='#1f77b4')
+        
+        # Agregamos un texto que muestre el valor actual de CPU
+        cpu_text = ax.text(0.018, 0.8, '', transform=ax.transAxes, fontsize=6)
+        
         def init():
-            ax.set_xlim(0, 10)  # Límite inicial del eje X, se ajustará dinámicamente.
+            ax.set_xlim(0, 10)
             ax.set_ylim(0, 100)
             line.set_data([], [])
-            return line,
-
+            return line, cpu_text
+                
         def update(frame):
+            # Si no hay suficientes datos, no hacemos nada
             if len(self.time_points) < 2:
-                return line,
-            # Convertir tiempos absolutos a tiempo relativo (segundos desde el inicio)
+                return line, cpu_text
+            
+            # Convertir tiempos absolutos a tiempo relativo
             start_time = self.time_points[0]
             times = [t - start_time for t in self.time_points]
+            
+            # Actualizar los datos de la línea
             line.set_data(times, self.cpu_usage)
-            # Ajustar el eje X para mostrar los últimos 10 segundos.
-            ax.set_xlim(max(0, times[-1]-10), times[-1]+1)
-            return line,
-
-        ani = FuncAnimation(fig, update, init_func=init, interval=500, blit=True)
+            
+            # Ajustar el eje X dinámicamente para mostrar una ventana deslizante
+            current_max = max(times)
+            visible_range = 20  # Ventana de 20 segundos
+            
+            # Esto creará un efecto de desplazamiento continuo del eje X
+            ax.set_xlim(current_max - visible_range, current_max)
+            
+            # Actualizar el texto con el valor actual de CPU y el tiempo transcurrido
+            if self.cpu_usage:
+                cpu_text.set_text(f'CPU: {self.cpu_usage[-1]:.1f}% | Tiempo: {current_max:.1f}s')
+            
+            return line, cpu_text
+    
+        # Crear una función para seguir agregando datos incluso después de que termine el procesamiento
+        def continuous_monitoring():
+            while plt.fignum_exists(fig.number):  # Mientras la figura siga abierta
+                usage = self.monitor_resources()
+                self.cpu_usage.append(usage['cpu'])
+                self.time_points.append(time.time())
+                time.sleep(0.1)  # Actualizar cada 100ms para mayor fluidez
+        
+        # Iniciar el monitoreo continuo en un hilo separado
+        monitoring_thread = threading.Thread(target=continuous_monitoring)
+        monitoring_thread.daemon = True  # Terminar cuando cierre la ventana
+        monitoring_thread.start()
+        
+        # Configurar la animación con intervalo más corto
+        ani = FuncAnimation(
+            fig, 
+            update, 
+            init_func=init, 
+            interval=100,  # Actualizar cada 100ms para mayor fluidez
+            blit=True,
+            save_count=1000,  # Mayor cantidad de frames en caché
+            cache_frame_data=False
+        )
+        
+        plt.tight_layout()
         plt.show()
 
+
 def main():
-    # Inicializamos el procesador de datos. 'ruta_al_archivo.csv' es un placeholder en este ejemplo.
+    # Inicializamos el procesador de datos
     dp = DataProcessor("ruta_al_archivo.csv")
     
-    # Ejecutamos el procesamiento de datos en un hilo separado para poder actualizar el gráfico en tiempo real.
+    # Ejecutamos el procesamiento de datos en un hilo separado
     processing_thread = threading.Thread(target=dp.process_data)
+    processing_thread.daemon = True  # Terminar si se cierra la ventana principal
     processing_thread.start()
     
-    # Iniciamos el gráfico en tiempo real (la ventana se mantiene abierta mientras se actualiza).
+    # Iniciamos el gráfico en tiempo real (ahora con monitoreo continuo incorporado)
     dp.realtime_plot()
     
-    # Esperamos a que se complete el procesamiento.
-    processing_thread.join()
-    
-    # Una vez finalizado, obtenemos los datos procesados encriptados.
-    encrypted = dp.get_encrypted_result()
-    print("\nDatos procesados y encriptados. Llave de cifrado (guárdala de manera segura):")
-    print(dp.key.decode())
-    # En un entorno real, podrías guardar 'encrypted' en un archivo o enviarlo a un servidor.
+    # Si llegamos aquí, es porque el usuario cerró la ventana del gráfico
+    print("Gráfico cerrado. Finalizando programa.")
 
 if __name__ == "__main__":
     main()
